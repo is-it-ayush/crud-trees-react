@@ -64,3 +64,26 @@ model VerificationToken {
 
     @@unique([identifier, token])
 }
+
+model Product {
+    id        String       @id @default(cuid())
+    name      String?
+    attribute Attributes[]
+    parent    Product[]    @relation("tree")
+    children  Product[]    @relation("tree")
+}
+
+model Attributes {
+    id      String    @id @default(cuid())
+    Product Product[]
+    name    String?
+    value   Value?    @relation(fields: [valueId], references: [id])
+    valueId String?
+}
+
+model Value {
+    id         String       @id @default(cuid())
+    Attributes Attributes[]
+    amount     String?
+    unit       String?
+}

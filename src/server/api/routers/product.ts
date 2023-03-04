@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 import type { toZod } from "tozod";
 import { ReturnTypeTreeOutput } from "~/components/tree/Tree";
 
+// https://github.com/colinhacks/tozod
+
 // const TreeMutation: toZod<ReturnTypeTreeOutput> = z.object({
 //   id: z.string(),
 //   name: z.string(),
@@ -20,37 +22,6 @@ import { ReturnTypeTreeOutput } from "~/components/tree/Tree";
 //   parent: z.string().array(),
 //   children: z.string().array(),
 // }).array();
-
-/*
-
-const TreeMutation: z.ZodArray<z.ZodObject<{
-    id: z.ZodString;
-    name: z.ZodNullable<z.ZodString>;
-    attribute: z.ZodArray<z.ZodObject<{
-        value: z.ZodNullable<z.ZodObject<{
-            amount: z.ZodNullable<z.ZodString>;
-            unit: z.ZodNullable<z.ZodString>;
-        }, "strip", z.ZodTypeAny, {
-            ...;
-        }, {
-            ...;
-        }>>;
-        name: z.ZodNullable<z.ZodString>;
-    }, "strip", z.ZodTypeAny, {
-           ...;
-    }, {
-        ...;
-    }>, "many">;
-    parent: z.ZodArray<...>;
-    children: z.ZodArray<...>;
-}, "strip", z.ZodTypeAny, {
-    ...;
-}, {
-    ...;
-}>, "many">
-
-
-*/
 
 const ProductSelect = Prisma.validator<Prisma.ProductSelect>()({
   id: true,
@@ -71,6 +42,7 @@ const ProductSelect = Prisma.validator<Prisma.ProductSelect>()({
 
 export const productRouter = createTRPCRouter({
   getParentProductIds: publicProcedure.query(async ({ ctx }) => {
+    console.log("\n\n Get Parent Product Ids Fired \n\n");
     return await ctx.prisma.product.findMany({
       where: {
         parent: {
@@ -81,6 +53,7 @@ export const productRouter = createTRPCRouter({
       },
       select: {
         id: true,
+        name: true,
       },
     });
   }),
@@ -88,6 +61,7 @@ export const productRouter = createTRPCRouter({
   getProductTree: publicProcedure
     .input(z.object({ productId: z.string() }))
     .query(async ({ input, ctx }) => {
+      console.log("\n\n Get Product Tree Fired \n\n");
       return await ctx.prisma.product.findMany({
         where: {
           id: input.productId,
@@ -129,48 +103,95 @@ export const productRouter = createTRPCRouter({
       });
     }),
 
-  //
+  /*
+    The tree array coming from the client will ALWAYS ONLY have a single parent object (treeData?.[0])
+    The nested children field inside the parent object may have multiple elements.
+
+    The goal of the mutation is:
+    1) If the top-level product id exists in the database, it will connect to the parent product and 
+       (the full application allows the tree to be modified on the client)
+
+    2) If the tree does not exist, create a new tree with new ids
+    */
   mutateProductTree: publicProcedure
+    // It is difficult to create this mutation when the tree is not 'typed' correctly in the mutation's input
+    // I tried creating a zod schema using toZod (see top of file)
     .input(z.object({ productId: z.string(), treeData: z.object({}).array() }))
     .mutation(async ({ input, ctx }) => {
       const { prisma } = ctx;
 
       const { productId, treeData } = input;
 
-      console.log("treeData", treeData);
+      console.log("\n\n Mutate Product Tree Fired \n\n");
 
-      // const mappedData = treeData[0]?.children.map(
-      //   (child: { id: any }) => child.id
-      // );
-
-      // console.log("mappedData", mappedData);
-
-      // console.log("tree data mapped:", treeData[0].children.map((child) => child)
-
-      return await prisma.product.update({
+      const parent = await prisma.product.upsert({
         where: {
           id: input.productId,
         },
-        data: {
-          children: {
-            connectOrCreate: [
-              {
-                // If creating child, first level already has parentId
-                create: {
-                  ...treeData?.[0],
-                  // children: {
-                  //   connect: {
-                  //     id:
-                  //   }
-                  // }
-                },
-                where: {
-                  id: "",
-                },
-              },
-            ],
-          },
+        update: {
+          // destructure parent level
+          ...treeData?.[0],
+          // upsert is not able to automatically write nested relations unless you explicitly write out the query
+          // children: {
+          //   connectOrCreate: [
+          //     {
+          //       create: {
+          //         //destructure first child
+          //         ...treeData?.[0]?.children,
+          //         // children: {
+          //         //   // add another connectOrCreate for next level, etc
+          //         // }
+          //       },
+          //       where: {
+          //         treeData?.[0]?.children?.[0]?.id
+          //       }
+          //     },
+          //     {
+          //       create: {
+          //         //destructure second child
+          //         ...treeData?.[0]?.children?.[1]
+          //       },
+          //       where: {
+          //         treeData?.[0]?.children?.[1]?.id
+          //       }
+          //     }
+          //   ]
+          // }
+        },
+        create: {
+          ...treeData?.[0],
+          children: {},
         },
       });
+
+      // --------------------This was another strategy I was trying
+
+      // User update & connectOrCreate for all children levels;
+      // const children = await prisma.product.update({
+      //   where: {
+      //     id: input.productId,
+      //   },
+      //   data: {
+      //     children: {
+      //       connectOrCreate: [
+      //         {
+      //           create: {
+      //             ...treeData?.[0]?.children,
+      //             // children: {
+      //             //   connect: {
+      //             //     id:
+      //             //   }
+      //             // }
+      //           },
+      //           where: {
+      //             // Use an empty string to write treeData as a new
+      //             // id: productId,
+      //             id: treeData?.[0]?.children?.[0]?.id,
+      //           },
+      //         },
+      //       ],
+      //     },
+      //   },
+      // });
     }),
 });

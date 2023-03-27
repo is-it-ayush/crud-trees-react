@@ -1,6 +1,5 @@
 import { faker } from "@faker-js/faker";
 import { PrismaClient } from "@prisma/client";
-import { create } from "domain";
 
 const prisma = new PrismaClient();
 
@@ -15,7 +14,7 @@ export async function createData() {
             attribute: {
               create: {
                 name: faker.commerce.productAdjective(),
-                value: {
+                values: {
                   create: {
                     amount: faker.datatype.number().toString(),
                     unit: "mm",
@@ -25,7 +24,7 @@ export async function createData() {
             },
           },
         });
-      })
+      }),
   );
 
   const productDataChildren = await prisma.$transaction(
@@ -38,7 +37,7 @@ export async function createData() {
             attribute: {
               create: {
                 name: faker.commerce.productAdjective(),
-                value: {
+                values: {
                   create: {
                     amount: faker.datatype.number().toString(),
                     unit: "mm",
@@ -53,7 +52,7 @@ export async function createData() {
             },
           },
         });
-      })
+      }),
   );
 }
 

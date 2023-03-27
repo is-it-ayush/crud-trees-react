@@ -4,10 +4,15 @@
  *
  * We also create a few inference helpers for input and output types.
  */
+import {
+  type PrismaClient,
+  type Product
+} from "@prisma/client";
 import { httpBatchLink, loggerLink } from "@trpc/client";
 import { createTRPCNext } from "@trpc/next";
 import { type inferRouterInputs, type inferRouterOutputs } from "@trpc/server";
 import superjson from "superjson";
+import { type Attribute } from "~/components/tree/Tree";
 
 import { type AppRouter } from "~/server/api/root";
 
@@ -66,3 +71,52 @@ export type RouterInputs = inferRouterInputs<AppRouter>;
  * @example type HelloOutput = RouterOutputs['example']['hello']
  */
 export type RouterOutputs = inferRouterOutputs<AppRouter>;
+
+export interface ProductTree extends Product {
+  children: (ProductTree | null)[];
+  attribute: Attribute[];
+}
+
+export async function getProductTree(
+  id: string,
+  prisma: PrismaClient,
+  depth = 7,
+): Promise<ProductTree | null> {
+  if (depth === 0) {
+    return null;
+  }
+  const product = await prisma.product.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      attribute: {
+        include: {
+          values: true,
+        },
+      },
+      parent: true,
+    },
+  });
+
+  if (!product) {
+    throw new Error(`No product found with ID ${id}`);
+  }
+
+  const children = await prisma.product.findMany({
+    where: { parent: { some: { id } } },
+    select: { id: true },
+  });
+
+  return {
+    ...product,
+    children:
+      depth > 1
+        ? await Promise.all(
+          children.map((child) =>
+            getProductTree(child.id, prisma, depth - 1),
+          ),
+        )
+        : [],
+  };
+}

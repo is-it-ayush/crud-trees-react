@@ -1,197 +1,94 @@
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
-import { Prisma } from "@prisma/client";
-import type { toZod } from "tozod";
-import { ReturnTypeTreeOutput } from "~/components/tree/Tree";
+import { getProductTree } from "~/utils/api";
+import { createTRPCRouter, publicProcedure } from "../trpc";
 
-// https://github.com/colinhacks/tozod
+const ValueInput = z.object({
+  amount: z.string().optional(),
+  unit: z.string().optional(),
+});
 
-// const TreeMutation: toZod<ReturnTypeTreeOutput> = z.object({
-//   id: z.string(),
-//   name: z.string(),
-//   attribute: z
-//     .object({
-//       id: z.union([z.string(), z.null()]),
-//       name: z.string(),
-//       value: z.object({
-//         amount: z.string(),
-//         unit: z.string(),
-//       }),
-//     })
-//     .array(),
-//   parent: z.string().array(),
-//   children: z.string().array(),
-// }).array();
-
-const ProductSelect = Prisma.validator<Prisma.ProductSelect>()({
-  id: true,
-  name: true,
-  attribute: {
-    select: {
-      name: true,
-      value: {
-        select: {
-          amount: true,
-          unit: true,
-        },
-      },
-    },
-  },
-  parent: true,
+const AttributeInput = z.object({
+  name: z.string().optional(),
+  values: ValueInput.optional(),
 });
 
 export const productRouter = createTRPCRouter({
-  getParentProductIds: publicProcedure.query(async ({ ctx }) => {
-    console.log("\n\n Get Parent Product Ids Fired \n\n");
-    return await ctx.prisma.product.findMany({
-      where: {
-        parent: {
-          every: {
-            name: null,
-          },
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
+  list: publicProcedure.query(async ({ ctx }) => {
+    return await ctx.prisma.product.findMany();
   }),
-
   getProductTree: publicProcedure
-    .input(z.object({ productId: z.string() }))
+    .input(z.object({ id: z.string() }))
     .query(async ({ input, ctx }) => {
-      console.log("\n\n Get Product Tree Fired \n\n");
-      return await ctx.prisma.product.findMany({
-        where: {
-          id: input.productId,
-        },
-        select: {
-          ...ProductSelect,
-          children: {
-            select: {
-              ...ProductSelect,
-              children: {
-                select: {
-                  ...ProductSelect,
-                  children: {
-                    select: {
-                      ...ProductSelect,
-                      children: {
-                        select: {
-                          ...ProductSelect,
-                          children: {
-                            select: {
-                              ...ProductSelect,
-                              children: {
-                                select: {
-                                  ...ProductSelect,
-                                  children: {},
-                                },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+      const res = await getProductTree(input.id, ctx.prisma);
+      return res;
+    }),
+  create: publicProcedure
+    .input(
+      z.object({
+        name: z.string().optional(),
+        parentId: z.string().optional(),
+        attributes: AttributeInput.array().optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const { parentId, attributes, ...data } = input;
+      return await ctx.prisma.product.create({
+        data: {
+          ...data,
+          parent: { connect: { id: parentId } },
+          attribute: {
+            create: (attributes || []).map(({ values, ...attribute }) => ({
+              ...attribute,
+              values: { create: values },
+            })),
           },
         },
       });
     }),
 
-  /*
-    The tree array coming from the client will ALWAYS ONLY have a single parent object (treeData?.[0])
-    The nested children field inside the parent object may have multiple elements.
-
-    The goal of the mutation is:
-    1) If the top-level product id exists in the database, it will connect to the parent product and 
-       (the full application allows the tree to be modified on the client)
-
-    2) If the tree does not exist, create a new tree with new ids
-    */
-  mutateProductTree: publicProcedure
-    // It is difficult to create this mutation when the tree is not 'typed' correctly in the mutation's input
-    // I tried creating a zod schema using toZod (see top of file)
-    .input(z.object({ productId: z.string(), treeData: z.object({}).array() }))
+  update: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        name: z.string().optional(),
+        parentId: z.string().optional(),
+        attributesToUpdateOrCreate: AttributeInput.extend({
+          id: z.string().optional(),
+        }).array().optional(),
+      }),
+    )
     .mutation(async ({ input, ctx }) => {
-      const { prisma } = ctx;
-
-      const { productId, treeData } = input;
-
-      console.log("\n\n Mutate Product Tree Fired \n\n");
-
-      const parent = await prisma.product.upsert({
-        where: {
-          id: input.productId,
-        },
-        update: {
-          // destructure parent level
-          ...treeData?.[0],
-          // upsert is not able to automatically write nested relations unless you explicitly write out the query
-          // children: {
-          //   connectOrCreate: [
-          //     {
-          //       create: {
-          //         //destructure first child
-          //         ...treeData?.[0]?.children,
-          //         // children: {
-          //         //   // add another connectOrCreate for next level, etc
-          //         // }
-          //       },
-          //       where: {
-          //         treeData?.[0]?.children?.[0]?.id
-          //       }
-          //     },
-          //     {
-          //       create: {
-          //         //destructure second child
-          //         ...treeData?.[0]?.children?.[1]
-          //       },
-          //       where: {
-          //         treeData?.[0]?.children?.[1]?.id
-          //       }
-          //     }
-          //   ]
-          // }
-        },
-        create: {
-          ...treeData?.[0],
-          children: {},
+      const { id, parentId, attributesToUpdateOrCreate, ...data } = input;
+      return ctx.prisma.product.update({
+        where: { id },
+        data: {
+          ...data,
+          parent: { connect: { id: parentId } },
+          attribute: {
+            upsert: (attributesToUpdateOrCreate || []).map(
+              ({ values, ...attribute }) => ({
+                where: { id: attribute.id ?? "" },
+                create: {
+                  ...attribute,
+                  values: { create: values },
+                },
+                update: {
+                  ...attribute,
+                  values: { create: values },
+                },
+              }),
+            ),
+          }
         },
       });
-
-      // --------------------This was another strategy I was trying
-
-      // User update & connectOrCreate for all children levels;
-      // const children = await prisma.product.update({
-      //   where: {
-      //     id: input.productId,
-      //   },
-      //   data: {
-      //     children: {
-      //       connectOrCreate: [
-      //         {
-      //           create: {
-      //             ...treeData?.[0]?.children,
-      //             // children: {
-      //             //   connect: {
-      //             //     id:
-      //             //   }
-      //             // }
-      //           },
-      //           where: {
-      //             // Use an empty string to write treeData as a new
-      //             // id: productId,
-      //             id: treeData?.[0]?.children?.[0]?.id,
-      //           },
-      //         },
-      //       ],
-      //     },
-      //   },
-      // });
+    }),
+  delete: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      return ctx.prisma.product.delete({ where: { id: input.id } });
     }),
 });
